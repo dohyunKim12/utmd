@@ -56,7 +56,6 @@ def initialize():
         logger.addHandler(file_handler)
         print(f"Logger initialized. Log file at: {log_file}")
 
-
 def write_pid_file():
     if os.path.exists(PID_FILE):
         logger.error("Daemon is already running.")
@@ -96,22 +95,23 @@ def execute_srun(payload):
         os.chdir(payload.directory)
         logger.info(f"Executing command: `{payload.command}` in directory: {payload.directory}")
 
-        srun_log_file = os.path.join(payload.directory, f"{payload.uuid}.log")
-        with open(srun_log_file, "a") as log_file:
-            log_file.write(f"Starting command: {payload.command}\n")
+        srun_log_file_path = os.path.join(PACKAGE_DIR, "commands", payload.uuid, "srun.log")
+        os.makedirs(os.path.dirname(srun_log_file_path), exist_ok=True)
+        with open(srun_log_file_path, "a") as srun_log_file:
+            srun_log_file.write(f"Starting command: {payload.command}\n")
 
             srun_process = subprocess.Popen(
                 payload.command,
                 shell=True,
-                stdout=log_file,
-                stderr=log_file,
+                stdout=srun_log_file,
+                stderr=srun_log_file,
                 stdin=subprocess.DEVNULL,
                 text=True,
                 env=payload.env,
                 start_new_session=True
             )
             logger.info(f"Started background process with PID: {srun_process.pid}")
-            log_file.write(f"Process started with PID: {srun_process.pid}\n")
+            srun_log_file.write(f"Process started with PID: {srun_process.pid}\n")
             srun_task_dict[payload.task_id] = srun_process
 
             if srun_process.wait() == 0:
