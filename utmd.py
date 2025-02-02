@@ -10,7 +10,7 @@ import threading
 import requests
 from kafka import KafkaConsumer
 from dotenv import dotenv_values
-from payload import Payload
+from taskobject import TaskObject
 
 TOPIC_NAME = None
 SERVER_IP = None
@@ -169,7 +169,7 @@ def validate_message(message):
             else :
                 logger.error(f".env file not found at: {env_path}")
                 return 1
-            return Payload(task_id, user, command, uuid, directory, env)
+            return TaskObject(task_id, user, command, uuid, directory, env)
         else :
             raise Exception("Parsing Exception in action")
     else:
@@ -189,7 +189,7 @@ def kafka_consumer():
     for message in consumer:
         logger.info(f"Received message: {message.value}")
         payload = validate_message(message.value)
-        if isinstance(payload, Payload):
+        if isinstance(payload, TaskObject):
             thread = threading.Thread(target=execute_srun, args=(payload,))
             thread.start()
         else:

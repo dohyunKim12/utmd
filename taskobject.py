@@ -1,4 +1,4 @@
-class Payload:
+class TaskObject:
     def __init__(self, task_id: int, user: str, command: str, uuid: str, directory: str, env:dict):
         """
         :param command: (String)
