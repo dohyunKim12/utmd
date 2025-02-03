@@ -92,6 +92,7 @@ def execute_srun(payload):
         os.makedirs(os.path.dirname(srun_log_file_path), exist_ok=True)
         with open(srun_log_file_path, "a") as srun_log_file:
             srun_log_file.write(f"Starting command: {payload.command}\n")
+            srun_log_file.flush()
 
             srun_process = subprocess.Popen(
                 payload.command,
@@ -104,7 +105,6 @@ def execute_srun(payload):
                 start_new_session=True
             )
             logger.info(f"Started background process with PID: {srun_process.pid}")
-            srun_log_file.write(f"Process started with PID: {srun_process.pid}\n")
             srun_task_dict[payload.task_id] = srun_process
 
             if srun_process.wait() == 0:
