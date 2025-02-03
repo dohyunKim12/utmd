@@ -13,9 +13,9 @@ from dotenv import dotenv_values
 from taskobject import TaskObject
 
 TOPIC_NAME = None
-SERVER_IP = None
+GTM_SERVER_IP = None
 KAFKA_PORT = None
-UTM_PORT = None
+GTM_SERVER_PORT = None
 HOME_DIR = None
 PACKAGE_DIR = None
 PID_FILE = None
@@ -23,12 +23,13 @@ srun_task_dict = {}
 logger = None
 
 def initialize():
-    global TOPIC_NAME, SERVER_IP, KAFKA_PORT, UTM_PORT, HOME_DIR, PACKAGE_DIR, PID_FILE, logger \
+    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR, PID_FILE, logger \
 
     TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
-    SERVER_IP = os.getenv("SERVER_IP", "default")
-    KAFKA_PORT = os.getenv("KAFKA_PORT", "9092")
-    UTM_PORT = os.getenv("UTM_PORT", "8023")
+    GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
+    GTM_SERVER_PORT = os.getenv("GTM_SERVER_PORT", "8023")
+    KAFKA_ADDRESS = os.getenv("KAFKA_ADDRESS", "localhost:9092")
+    KAFKA_PORT = KAFKA_ADDRESS.split(":")[-1]
     HOME_DIR = os.getenv("HOME")
     PACKAGE_DIR = HOME_DIR + "/utmd"
     PID_FILE = PACKAGE_DIR + "/tmp/utmd.pid"
@@ -74,7 +75,7 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 def send_complete_request(task_id, user):
-    url = f"http://{SERVER_IP}:{UTM_PORT}/api/task/complete"
+    url = f"http://{GTM_SERVER_IP}:{GTM_SERVER_PORT}/api/task/complete"
     headers = {"Content-Type": "application/json"}
     data = {
         "task_id": task_id,
@@ -180,7 +181,7 @@ def kafka_consumer():
     logger.info("Starting Kafka consumer...")
     consumer = KafkaConsumer(
         TOPIC_NAME,
-        bootstrap_servers=[f"{SERVER_IP}:{KAFKA_PORT}"],
+        bootstrap_servers=[f"{GTM_SERVER_IP}:{KAFKA_PORT}"],
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id="my-group",
