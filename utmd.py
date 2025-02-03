@@ -57,14 +57,6 @@ def initialize():
         logger.addHandler(file_handler)
         print(f"Logger initialized. Log file at: {log_file}")
 
-def write_pid_file():
-    if os.path.exists(PID_FILE):
-        logger.error("Daemon is already running.")
-        sys.exit(1)
-    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-    with open(PID_FILE, "a") as f:
-        f.write(str(os.getpid()))
-
 def remove_pid_file():
     if os.path.exists(PID_FILE):
         os.remove(PID_FILE)
@@ -164,7 +156,7 @@ def validate_message(message):
             logger.info(f"Validating message: task_id={task_id}, directory={directory}, uuid={uuid}, command={command}")
 
             # Read env file
-            env_path = f"{directory}/{uuid}.env"
+            env_path = f"{PACKAGE_DIR}/commands/{uuid}/.env"
             if os.path.exists(env_path):
                 env = dotenv_values(env_path)
             else :
@@ -203,7 +195,6 @@ def main():
 
     initialize()
 
-    write_pid_file()
     try:
         kafka_consumer()
     finally:
