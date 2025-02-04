@@ -23,7 +23,8 @@ srun_task_dict = {}
 logger = None
 
 def initialize():
-    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR, PID_FILE, logger \
+    global logger
+    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR, PID_FILE
 
     TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
     GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
@@ -33,6 +34,7 @@ def initialize():
     HOME_DIR = os.getenv("HOME")
     PACKAGE_DIR = HOME_DIR + "/utmd"
     PID_FILE = PACKAGE_DIR + "/tmp/utmd.pid"
+
     log_dir = os.path.join(PACKAGE_DIR, "log")
     os.makedirs(log_dir, exist_ok=True)
 
@@ -40,22 +42,27 @@ def initialize():
     log_file = os.path.join(log_dir, "utmd.log")
     logger= logging.getLogger()
     logger.setLevel(logging.INFO)
-    # Avoid adding multiple handlers
-    if not logger.hasHandlers():
-        formatter = logging.Formatter(
-            "[%(asctime)s|%(levelname)-7s][%(name)s %(lineno)d %(funcName)s] %(message)s ",
-            datefmt='%Y-%m-%d %H:%M:%S')
 
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-        stream_handler.setLevel(logging.INFO)
-        logger.addHandler(stream_handler)
+    # Remove previous handlers
+    while logger.hasHandlers():
+        logger.removeHandler(logger.handlers[0])
 
-        file_handler = logging.FileHandler(log_file, mode="a")
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(logging.DEBUG)
-        logger.addHandler(file_handler)
-        print(f"Logger initialized. Log file at: {log_file}")
+    formatter = logging.Formatter(
+        "[%(asctime)s|%(levelname)-7s][%(name)s %(lineno)d %(funcName)s] %(message)s ",
+        datefmt='%Y-%m-%d %H:%M:%S')
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    stream_handler.setLevel(logging.INFO)
+    logger.addHandler(stream_handler)
+
+    file_handler = logging.FileHandler(log_file, mode="a")
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    logger.addHandler(file_handler)
+
+    print(f"Logger initialized. Log file at: {log_file}")
+    logger.info(f"Logger initialized. Log file at: {log_file}")
 
 def remove_pid_file():
     if os.path.exists(PID_FILE):
