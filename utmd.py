@@ -6,6 +6,7 @@ import json
 import signal
 import logging
 import threading
+from datetime import datetime, timezone
 
 import requests
 from kafka import KafkaConsumer
@@ -18,13 +19,12 @@ KAFKA_PORT = None
 GTM_SERVER_PORT = None
 HOME_DIR = None
 PACKAGE_DIR = None
-PID_FILE = None
 srun_task_dict = {}
 logger = None
 
 def initialize():
     global logger
-    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR, PID_FILE
+    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR
 
     TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
     GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
@@ -33,14 +33,13 @@ def initialize():
     KAFKA_PORT = KAFKA_ADDRESS.split(":")[-1]
     HOME_DIR = os.getenv("HOME")
     PACKAGE_DIR = HOME_DIR + "/utmd"
-    PID_FILE = PACKAGE_DIR + "/tmp/utmd.pid"
 
     log_dir = os.path.join(PACKAGE_DIR, "log")
     os.makedirs(log_dir, exist_ok=True)
 
     # Setup logger
     log_file = os.path.join(log_dir, "utmd.log")
-    logger= logging.getLogger()
+    logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
     # Remove previous handlers
@@ -60,17 +59,11 @@ def initialize():
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
-
-    print(f"Logger initialized. Log file at: {log_file}")
-    logger.info(f"Logger initialized. Log file at: {log_file}")
-
-def remove_pid_file():
-    if os.path.exists(PID_FILE):
-        os.remove(PID_FILE)
+    logger.info("Logger initialized.")
+    logger.info("Utmd initialized and started successfully.")
 
 def signal_handler(signum, frame):
     logger.info(f"Received signal {signum}. Shutting down.")
-    remove_pid_file()
     sys.exit(0)
 
 def send_complete_request(task_id, user):
@@ -95,7 +88,7 @@ def execute_srun(payload):
         os.chdir(payload.directory)
         logger.info(f"Executing command: `{payload.command}` in directory: {payload.directory}")
 
-        srun_log_file_path = os.path.join(PACKAGE_DIR, "commands", payload.uuid, "srun.log")
+        srun_log_file_path = os.path.join(PACKAGE_DIR, "commands", payload.date_str , payload.uuid, "srun.log")
         os.makedirs(os.path.dirname(srun_log_file_path), exist_ok=True)
         with open(srun_log_file_path, "a") as srun_log_file:
             srun_log_file.write(f"Starting command: {payload.command}\n")
@@ -163,13 +156,19 @@ def validate_message(message):
             logger.info(f"Validating message: task_id={task_id}, directory={directory}, uuid={uuid}, command={command}")
 
             # Read env file
-            env_path = f"{PACKAGE_DIR}/commands/{uuid}/.env"
+            timestamp = int(uuid.split("-")[0])
+            dt_utc = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            local_tz = datetime.now().astimezone().tzinfo
+            dt_local = dt_utc.astimezone(local_tz)
+            date_str = dt_local.strftime("%Y-%m-%d")
+            env_path = f"{PACKAGE_DIR}/commands/{date_str}/{uuid}/.env"
+
             if os.path.exists(env_path):
                 env = dotenv_values(env_path)
             else :
                 logger.error(f".env file not found at: {env_path}")
                 return 1
-            return TaskObject(task_id, user, command, uuid, directory, env)
+            return TaskObject(task_id, user, command, uuid, directory, env, date_str)
         else :
             raise Exception("Parsing Exception in action")
     else:
@@ -202,10 +201,7 @@ def main():
 
     initialize()
 
-    try:
-        kafka_consumer()
-    finally:
-        remove_pid_file()
+    kafka_consumer()
 
 if __name__ == "__main__":
     logging.info("Running in background mode.")
