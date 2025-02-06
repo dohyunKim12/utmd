@@ -109,10 +109,10 @@ def execute_srun(payload):
 
             if srun_process.wait() == 0:
                 logger.info(f"Process with PID {srun_process.pid} completed successfully.")
-                # Send HTTP complete request
-                send_complete_request(payload.task_id, payload.user)
             else:
                 logger.error(f"Process with PID {srun_process.pid} terminated with errors.")
+            # Send HTTP complete request
+            send_complete_request(payload.task_id, payload.user)
             return
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
