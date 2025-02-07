@@ -6,7 +6,7 @@ import json
 import signal
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
 
 import requests
 from kafka import KafkaConsumer
@@ -107,6 +107,13 @@ def execute_srun(payload):
             logger.info(f"Started background process with PID: {srun_process.pid}")
             srun_task_dict[payload.task_id] = srun_process
 
+            # execute scontrol command for get job_id, short_cmd
+            get_job_info(10)
+            # scontrol show job --json
+            # parsing in python
+
+            # call GTM service call(set_job_id) to register job_id & short cmd
+
             if srun_process.wait() == 0:
                 logger.info(f"Process with PID {srun_process.pid} completed successfully.")
             else:
@@ -116,6 +123,26 @@ def execute_srun(payload):
             return
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+
+def get_job_info(comment_value, max_retries=10, wait_time=1):
+    for attempt in range(max_retries):
+        result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True)
+        try:
+            jobs = json.loads(result.stdout)
+            for job in jobs["jobs"]:
+                if job.get("comment") == comment_value:
+                    job_id = str(job["job_id"])
+                    job_name = job["name"]
+                    return job_id, job_name
+
+        except (json.JSONDecodeError, KeyError):
+            print("Failed to parse Slurm JSON output")
+
+        print(f"[{attempt+1}/{max_retries}] Job 정보를 찾을 수 없음. {wait_time}초 대기 후 재시도...")
+        time.sleep(wait_time)
+
+    print("❌ 최대 재시도 횟수를 초과했습니다. Slurm에서 Job을 찾을 수 없습니다.")
+    return None, None  # 찾지 못한 경우
 
 def terminate_task(task_id):
     process = srun_task_dict.get(task_id)
