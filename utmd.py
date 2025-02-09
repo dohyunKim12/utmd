@@ -1,4 +1,4 @@
-# ENV SERVER_IP, KAFKA_PORT, UTM_PORT, TOPIC_NAME
+# ENV GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME needed
 import os
 import subprocess
 import sys
@@ -13,10 +13,10 @@ from kafka import KafkaConsumer
 from dotenv import dotenv_values
 from taskobject import TaskObject
 
-TOPIC_NAME = None
 GTM_SERVER_IP = None
-KAFKA_PORT = None
 GTM_SERVER_PORT = None
+KAFKA_ADDRESS = None
+TOPIC_NAME = None
 HOME_DIR = None
 PACKAGE_DIR = None
 srun_task_dict = {}
@@ -24,13 +24,12 @@ logger = None
 
 def initialize():
     global logger
-    global TOPIC_NAME, GTM_SERVER_IP, KAFKA_PORT, GTM_SERVER_PORT, HOME_DIR, PACKAGE_DIR
+    global GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME_DIR, PACKAGE_DIR
 
-    TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
     GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
     GTM_SERVER_PORT = os.getenv("GTM_SERVER_PORT", "8023")
     KAFKA_ADDRESS = os.getenv("KAFKA_ADDRESS", "localhost:9092")
-    KAFKA_PORT = KAFKA_ADDRESS.split(":")[-1]
+    TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
     HOME_DIR = os.getenv("HOME")
     PACKAGE_DIR = HOME_DIR + "/utmd"
 
@@ -107,12 +106,11 @@ def execute_srun(payload):
             logger.info(f"Started background process with PID: {srun_process.pid}")
             srun_task_dict[payload.task_id] = srun_process
 
-            # execute scontrol command for get job_id, short_cmd
-            get_job_info(10)
-            # scontrol show job --json
-            # parsing in python
+            # execute scontrol command for get job_id, short_cmd by comment (utm-uuid)
+            job_id, short_cmd = get_job_info("utm-" + payload.uuid)
 
             # call GTM service call(set_job_id) to register job_id & short cmd
+            set_job_id(payload.task_id, payload.user, job_id, short_cmd)
 
             if srun_process.wait() == 0:
                 logger.info(f"Process with PID {srun_process.pid} completed successfully.")
@@ -124,25 +122,43 @@ def execute_srun(payload):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
 
-def get_job_info(comment_value, max_retries=10, wait_time=1):
+def get_job_info(comment_value, max_retries=10, wait_time=0.5):
     for attempt in range(max_retries):
-        result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True)
+        result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True) # sync call
         try:
             jobs = json.loads(result.stdout)
             for job in jobs["jobs"]:
                 if job.get("comment") == comment_value:
                     job_id = str(job["job_id"])
-                    job_name = job["name"]
-                    return job_id, job_name
+                    short_cmd = job["name"]
+                    return job_id, short_cmd
 
         except (json.JSONDecodeError, KeyError):
-            print("Failed to parse Slurm JSON output")
+            logger.error("Failed to parse Slurm JSON output")
 
-        print(f"[{attempt+1}/{max_retries}] Job 정보를 찾을 수 없음. {wait_time}초 대기 후 재시도...")
+        logger.debug(f"[{attempt+1}/{max_retries}] Cannot find job info. Retry after {wait_time} sec...")
         time.sleep(wait_time)
 
-    print("❌ 최대 재시도 횟수를 초과했습니다. Slurm에서 Job을 찾을 수 없습니다.")
-    return None, None  # 찾지 못한 경우
+    logger.warn(f"Cannot find job in slurm for comment: {comment_value}")
+    return None, None
+
+def set_job_id(task_id, user, job_id, short_cmd):
+    url = f"http://{GTM_SERVER_IP}:{GTM_SERVER_PORT}/api/task/set_job_id"
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "task_id": task_id,
+        "user": user,
+        "job_id": job_id,
+        "short_cmd": short_cmd
+    }
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code >= 200 and response.status_code < 300:
+            logger.info(f"Set job_id request successfully send: {response.json()}")
+        else:
+            logger.error(f"Set job_id request failed: {response.status_code}, {response.text}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error occurred in send complete request: {e}")
 
 def terminate_task(task_id):
     process = srun_task_dict.get(task_id)
@@ -206,7 +222,7 @@ def kafka_consumer():
     logger.info("Starting Kafka consumer...")
     consumer = KafkaConsumer(
         TOPIC_NAME,
-        bootstrap_servers=[f"{GTM_SERVER_IP}:{KAFKA_PORT}"],
+        bootstrap_servers=KAFKA_ADDRESS,
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id="my-group",
