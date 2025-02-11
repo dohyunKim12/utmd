@@ -6,7 +6,8 @@ import json
 import signal
 import logging
 import threading
-from datetime import datetime, timezone, time
+from datetime import datetime, timezone
+import time
 
 import requests
 from kafka import KafkaConsumer
@@ -19,18 +20,20 @@ KAFKA_ADDRESS = None
 TOPIC_NAME = None
 HOME_DIR = None
 PACKAGE_DIR = None
+LOG_LEVEL = None
 srun_task_dict = {}
 logger = None
 
 def initialize():
     global logger
-    global GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME_DIR, PACKAGE_DIR
+    global GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME_DIR, PACKAGE_DIR, LOG_LEVEL
 
     GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
     GTM_SERVER_PORT = os.getenv("GTM_SERVER_PORT", "8023")
     KAFKA_ADDRESS = os.getenv("KAFKA_ADDRESS", "localhost:9092")
     TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
     HOME_DIR = os.getenv("HOME")
+    LOG_LEVEL = os.getenv("UTMD_LOG_LEVEL", logging.INFO)
     PACKAGE_DIR = HOME_DIR + "/utmd"
 
     log_dir = os.path.join(PACKAGE_DIR, "log")
@@ -39,7 +42,7 @@ def initialize():
     # Setup logger
     log_file = os.path.join(log_dir, "utmd.log")
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(LOG_LEVEL)
 
     # Remove previous handlers
     while logger.hasHandlers():
@@ -51,15 +54,14 @@ def initialize():
 
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
-    stream_handler.setLevel(logging.INFO)
     logger.addHandler(stream_handler)
 
     file_handler = logging.FileHandler(log_file, mode="a")
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
     logger.info("Logger initialized.")
     logger.info("Utmd initialized and started successfully.")
+
 
 def signal_handler(signum, frame):
     logger.info(f"Received signal {signum}. Shutting down.")
@@ -107,7 +109,9 @@ def execute_srun(payload):
             srun_task_dict[payload.task_id] = srun_process
 
             # execute scontrol command for get job_id, short_cmd by comment (utm-uuid)
-            job_id, short_cmd = get_job_info("utm-" + payload.uuid)
+            interval = 0.3
+            time.sleep(interval)
+            job_id, short_cmd = get_job_info("utm-" + payload.uuid, 10, interval)
 
             # call GTM service call(set_job_id) to register job_id & short cmd
             set_job_id(payload.task_id, payload.user, job_id, short_cmd)
@@ -122,7 +126,7 @@ def execute_srun(payload):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
 
-def get_job_info(comment_value, max_retries=10, wait_time=0.5):
+def get_job_info(comment_value, max_retries, interval):
     for attempt in range(max_retries):
         result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True) # sync call
         try:
@@ -136,8 +140,8 @@ def get_job_info(comment_value, max_retries=10, wait_time=0.5):
         except (json.JSONDecodeError, KeyError):
             logger.error("Failed to parse Slurm JSON output")
 
-        logger.debug(f"[{attempt+1}/{max_retries}] Cannot find job info. Retry after {wait_time} sec...")
-        time.sleep(wait_time)
+        logger.info(f"[{attempt+1}/{max_retries}] Cannot find job info. Retry after {interval} sec...")
+        time.sleep(interval)
 
     logger.warn(f"Cannot find job in slurm for comment: {comment_value}")
     return None, None
