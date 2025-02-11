@@ -12,6 +12,7 @@ import time
 import requests
 from kafka import KafkaConsumer
 from dotenv import dotenv_values
+
 from taskobject import TaskObject
 
 GTM_SERVER_IP = None
@@ -108,6 +109,7 @@ def execute_srun(payload):
             logger.info(f"Started background process with PID: {srun_process.pid}")
             srun_task_dict[payload.task_id] = srun_process
 
+        try:
             # execute scontrol command for get job_id, short_cmd by comment (utm-uuid)
             interval = 0.3
             time.sleep(interval)
@@ -120,11 +122,17 @@ def execute_srun(payload):
                 logger.info(f"Process with PID {srun_process.pid} completed successfully.")
             else:
                 logger.error(f"Process with PID {srun_process.pid} terminated with errors.")
+        except Exception as e:
+            logger.error(f"Unexpected error in get_set_job_id: {e}")
+        finally:
+            with open(srun_log_file_path, "a") as srun_log_file:
+                srun_log_file.write("===EOF===\n")
+                srun_log_file.flush()
             # Send HTTP complete request
             send_complete_request(payload.task_id, payload.user)
-            return
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Error occurred in srun execute: {e}")
+
 
 def get_job_info(comment_value, max_retries, interval):
     for attempt in range(max_retries):
@@ -203,7 +211,7 @@ def validate_message(message):
             logger.info(f"Validating message: task_id={task_id}, directory={directory}, uuid={uuid}, command={command}")
 
             # Read env file
-            timestamp = int(uuid.split("-")[0])
+            timestamp = int(uuid.split("_")[0])
             dt_utc = datetime.fromtimestamp(timestamp, tz=timezone.utc)
             local_tz = datetime.now().astimezone().tzinfo
             dt_local = dt_utc.astimezone(local_tz)
