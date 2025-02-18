@@ -1,11 +1,13 @@
 # ENV GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME needed
 import os
+import shutil
 import subprocess
 import sys
 import json
 import signal
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 import time
 
@@ -13,6 +15,7 @@ import requests
 import yaml
 from kafka import KafkaConsumer
 from dotenv import dotenv_values
+from twisted.web.xmlrpc import payloadTemplate
 
 from taskobject import TaskObject
 
@@ -106,6 +109,53 @@ def send_complete_request(task_id, user):
     }
     http_post_request(url, data, headers)
 
+def send_preempted_request(task_id, user):
+    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/preempted"
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "task_id": task_id,
+        "user": user
+    }
+    http_post_request(url, data, headers)
+
+def regenerate_uuid(payload):
+    # re-gen uuid
+    new_timestamp = str(int(time.time()))
+    new_uuid = new_timestamp + "_" + uuid.uuid4().hex[:8]
+
+    # create env file (copy env from old_env_file_path)
+    timestamp = int(payload.uuid.split("_")[0])
+    dt_utc = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    local_tz = datetime.now().astimezone().tzinfo
+    dt_local = dt_utc.astimezone(local_tz)
+    date_str = dt_local.strftime("%Y-%m-%d")
+    old_env_path = f"{Config.PACKAGE_DIR}/commands/{date_str}/{payload.uuid}/.env"
+
+    new_date_str = datetime.now(tz=local_tz).strftime("%Y-%m-%d")
+    new_env_path = f"{Config.PACKAGE_DIR}/commands/{new_date_str}/{new_uuid}/.env"
+
+    try:
+        new_env_dir = os.path.dirname(new_env_path)
+        os.makedirs(new_env_dir, exist_ok=True)
+        shutil.copy(old_env_path, new_env_path)
+        logger.info(f"Copied {old_env_path} → {new_env_path}")
+    except FileNotFoundError:
+        logger.error(f"Error: generate new_payload failed. old_env_path {old_env_path} not found.")
+        return
+
+    # re-set payload.uuid to new uuid
+    new_payload = payload
+    new_payload.uuid = new_uuid
+    new_payload.task_id = None
+    new_payload.job_id = None
+    logger.info(f"TaskId {new_payload.task_id}'s uuid updated to {new_payload.uuid}")
+
+def send_add_request(payload):
+    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/add"
+    headers = {"Content-Type": "application/json"}
+    data = payload.to_dict()
+    http_post_request(url, data, headers)
+
 def get_job_info(comment_value, max_retries, interval):
     for attempt in range(max_retries):
         result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True) # sync call
@@ -125,6 +175,18 @@ def get_job_info(comment_value, max_retries, interval):
 
     logger.warn(f"Cannot find job in slurm for comment: {comment_value}")
     return None, None
+
+def get_job_state(job_id):
+    try:
+        result = subprocess.run(
+            ["sacct", "-j", str(job_id), "--format=State", "--noheader"],
+            capture_output=True, text=True, check=True
+        )
+        job_state = result.stdout.split("\n")[0].strip()
+        return job_state if job_state else None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error getting job state: {e}")
+        return None
 
 def send_set_job_id_request(task_id, user, job_id, short_cmd):
     url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/set_job_id"
@@ -171,6 +233,7 @@ def execute_srun(payload):
             interval = 0.3
             time.sleep(interval)
             job_id, short_cmd = get_job_info("utm-" + payload.uuid, 10, interval)
+            payload.job_id = job_id
 
             # call GTM service call(set_job_id) to register job_id & short cmd
             send_set_job_id_request(payload.task_id, payload.user, job_id, short_cmd)
@@ -185,7 +248,17 @@ def execute_srun(payload):
             with open(srun_log_file_path, "a") as srun_log_file:
                 srun_log_file.write("===EOF===\n")
                 srun_log_file.flush()
-            send_complete_request(payload.task_id, payload.user)
+
+            # execute sacct & get status, call GTM addTask if preempt
+            status = get_job_state(payload.job_id)
+            if status == "COMPLETED" :
+                send_complete_request(payload.task_id, payload.user)
+            elif status == "PREEMPTED" :
+                new_payload = regenerate_uuid(payload)
+                send_preempted_request(payload.task_id, payload.user)
+                send_add_request(new_payload)
+            else :
+                logger.warn(f"Unreachable state {status} in task_id {payload.task_id}")
     except Exception as e:
         logger.error(f"Error occurred in srun execute: {e}")
 
@@ -207,11 +280,16 @@ def validate_message(message):
             logger.error(f"Missing required fields in message: {message}")
             return None
         task_id = data.get("id")
+        job_id = data.get("job_id")
         user = data.get("user")
         directory = data.get("directory")
         uuid = data.get("uuid")
         command = data.get("command")
         action = data.get("action")
+        license_type = data.get("license_type")
+        license_count = data.get("license_count")
+        timelimit = data.get("timelimit")
+        requested_cpu = data.get("requested_cpu")
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse message: {message}, Error: {e}")
         return None
@@ -236,7 +314,7 @@ def validate_message(message):
         else :
             logger.error(f".env file not found at: {env_path}")
             return None
-        return TaskObject(task_id, user, command, uuid, directory, env, date_str)
+        return TaskObject(task_id, job_id, user, command, uuid, directory, env, date_str, license_type, license_count, timelimit, requested_cpu)
     else :
         logger.error(f"Invalid action type: {action}")
         return None
