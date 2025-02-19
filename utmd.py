@@ -13,6 +13,7 @@ import time
 
 import requests
 import yaml
+import re
 from kafka import KafkaConsumer
 from dotenv import dotenv_values
 from twisted.web.xmlrpc import payloadTemplate
@@ -100,21 +101,13 @@ def http_post_request(url: str, data: dict, headers: dict = None):
         logger.error(f"POST request failed: {url}, error: {e}")
         return None
 
-def send_complete_request(task_id, user):
-    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/complete"
+def send_finish_request(task_id, user, state):
+    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/finish"
     headers = {"Content-Type": "application/json"}
     data = {
         "task_id": task_id,
-        "user": user
-    }
-    http_post_request(url, data, headers)
-
-def send_preempted_request(task_id, user):
-    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/preempted"
-    headers = {"Content-Type": "application/json"}
-    data = {
-        "task_id": task_id,
-        "user": user
+        "user": user,
+        "state": state
     }
     http_post_request(url, data, headers)
 
@@ -179,14 +172,16 @@ def get_job_info(comment_value, max_retries, interval):
 def get_job_state(job_id):
     try:
         result = subprocess.run(
-            ["sacct", "-j", str(job_id), "--format=State", "--noheader"],
+            ["sacct", "-X", "-j", str(job_id), "--format=State,ExitCode", "--noheader"],
             capture_output=True, text=True, check=True
         )
-        job_state = result.stdout.split("\n")[0].strip()
-        return job_state if job_state else None
+        output_list = result.stdout.split()
+        job_state = re.sub(r'\+$', '', output_list[0])
+        exit_code = int(output_list[1].split(":")[0])
+        return (job_state, exit_code) if job_state else (None, None)
     except subprocess.CalledProcessError as e:
         logger.error(f"Error getting job state: {e}")
-        return None
+        return None, None
 
 def send_set_job_id_request(task_id, user, job_id, short_cmd):
     url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/set_job_id"
@@ -250,13 +245,17 @@ def execute_srun(payload):
                 srun_log_file.flush()
 
             # execute sacct & get status, call GTM addTask if preempt
-            status = get_job_state(payload.job_id)
+            status, exit_code = get_job_state(payload.job_id)
             if status == "COMPLETED" :
-                send_complete_request(payload.task_id, payload.user)
+                send_finish_request(payload.task_id, payload.user, "completed")
             elif status == "PREEMPTED" :
                 new_payload = regenerate_uuid(payload)
-                send_preempted_request(payload.task_id, payload.user)
+                send_finish_request(payload.task_id, payload.user, "preempted")
                 send_add_request(new_payload)
+            elif status == "CANCELLED" or (status == "FAILED" and exit_code == 0):
+                send_finish_request(payload.task_id, payload.user, "cancelled")
+            elif status == "FAILED" and exit_code != 0 :
+                send_finish_request(payload.task_id, payload.user, "failed")
             else :
                 logger.warn(f"Unreachable state {status} in task_id {payload.task_id}")
     except Exception as e:
