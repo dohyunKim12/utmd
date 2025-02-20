@@ -21,6 +21,7 @@ from dotenv import dotenv_values
 from taskobject import TaskObject
 
 logger = None
+kafka_running = True
 srun_task_dict = {}
 
 class Config:
@@ -82,10 +83,12 @@ def initialize():
     logger.info("Logger initialized.")
     logger.info("Utmd initialized and started successfully.")
 
-def signal_handler(signum):
+def signal_handler(signum, frame):
+    global kafka_running
     logger.info(f"Received signal {signum}. Shutting down.")
     for task_id, proc in srun_task_dict.items():
         terminate_task(task_id)
+    kafka_running = False
     sys.exit(0)
 
 def http_post_request(url: str, data: dict, headers: dict = None):
@@ -349,20 +352,25 @@ def kafka_consumer():
         group_id="utmd",
         value_deserializer=lambda x: x.decode("utf-8"),
     )
-    for message in consumer:
-        if message and message.value:
-            logger.info(f"Received message: {message.value}")
-            payload = validate_message(message.value)
+    try:
+        while kafka_running:
+            for message in consumer:
+                if message and message.value:
+                    logger.info(f"Received message: {message.value}")
+                    payload = validate_message(message.value)
 
-            if payload is None:
-                logger.error("Received an invalid message: Payload is None.")
-                continue
+                    if payload is None:
+                        logger.error("Received an invalid message: Payload is None.")
+                        continue
 
-            if isinstance(payload, TaskObject):
-                thread = threading.Thread(target=execute_srun, args=(payload,))
-                thread.start()
-            else:
-                logger.error(f"Error occurred in validate_message: {payload}")
+                    if isinstance(payload, TaskObject):
+                        thread = threading.Thread(target=execute_srun, args=(payload,))
+                        thread.start()
+                    else:
+                        logger.error(f"Error occurred in validate_message: {payload}")
+    finally:
+        logger.info("Closing kafka consumer")
+        consumer.close()
 
 def main():
     signal.signal(signal.SIGTERM, signal_handler)
