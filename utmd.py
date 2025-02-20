@@ -42,7 +42,7 @@ class Config:
         cls.GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
         cls.GTM_SERVER_PORT = os.getenv("GTM_SERVER_PORT", "8023")
         cls.KAFKA_ADDRESS = os.getenv("KAFKA_ADDRESS", "localhost:9092")
-        cls.TOPIC_NAME = os.getenv("TOPIC_NAME", "default")
+        cls.TOPIC_NAME = "utm-" + os.getenv("USER")
         cls.HOME_DIR = os.getenv("HOME", "/home/default")
         cls.PACKAGE_DIR = os.path.join(cls.HOME_DIR, "utmd")
         cls.LOG_LEVEL = os.getenv("UTMD_LOG_LEVEL", logging.INFO)
