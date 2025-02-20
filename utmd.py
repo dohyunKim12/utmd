@@ -1,4 +1,5 @@
 # ENV GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME needed
+import copy
 import os
 import shutil
 import subprocess
@@ -16,7 +17,6 @@ import yaml
 import re
 from kafka import KafkaConsumer
 from dotenv import dotenv_values
-from twisted.web.xmlrpc import payloadTemplate
 
 from taskobject import TaskObject
 
@@ -84,6 +84,8 @@ def initialize():
 
 def signal_handler(signum):
     logger.info(f"Received signal {signum}. Shutting down.")
+    for task_id, proc in srun_task_dict.items():
+        terminate_task(task_id)
     sys.exit(0)
 
 def http_post_request(url: str, data: dict, headers: dict = None):
@@ -102,6 +104,7 @@ def http_post_request(url: str, data: dict, headers: dict = None):
         return None
 
 def send_finish_request(task_id, user, state):
+    logger.info(f"Send finish request for task: {task_id}, state: {state}")
     url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/finish"
     headers = {"Content-Type": "application/json"}
     data = {
@@ -136,12 +139,24 @@ def regenerate_uuid(payload):
         logger.error(f"Error: generate new_payload failed. old_env_path {old_env_path} not found.")
         return
 
-    # re-set payload.uuid to new uuid
-    new_payload = payload
+    # re-gen comment in command
+    new_comment = f"utm-{new_uuid}"
+    pattern = r"--comment\s*=\s*'[^']*'"
+    if re.search(pattern, payload.command):
+        # replace --comment field (old comment to new comment)
+        new_command = re.sub(pattern, f"--comment='{new_comment}'", payload.command)
+    else:
+        # add new comment if --comment not exists
+        new_command = re.sub(r"(\bsrun\b)", r"\1 --comment='{}'".format(new_comment), payload.command, count=1)
+
+    # generate new_payload
+    new_payload = copy.deepcopy(payload)
     new_payload.uuid = new_uuid
     new_payload.task_id = None
     new_payload.job_id = None
-    logger.info(f"TaskId {new_payload.task_id}'s uuid updated to {new_payload.uuid}")
+    new_payload.command = new_command
+    logger.info(f"TaskId {payload.task_id}'s uuid updated to {new_payload.uuid}")
+    return new_payload
 
 def send_add_request(payload):
     url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/add"
@@ -169,16 +184,22 @@ def get_job_info(comment_value, max_retries, interval):
     logger.warn(f"Cannot find job in slurm for comment: {comment_value}")
     return None, None
 
-def get_job_state(job_id):
+def get_job_state(job_id, max_wait=30, interval=1):
     try:
-        result = subprocess.run(
-            ["sacct", "-X", "-j", str(job_id), "--format=State,ExitCode", "--noheader"],
-            capture_output=True, text=True, check=True
-        )
-        output_list = result.stdout.split()
-        job_state = re.sub(r'\+$', '', output_list[0])
-        exit_code = int(output_list[1].split(":")[0])
-        return (job_state, exit_code) if job_state else (None, None)
+        waited = 0
+        while waited < max_wait:
+             result = subprocess.run(
+                 ["sacct", "-X", "-j", str(job_id), "--format=State,ExitCode", "--noheader"],
+                 capture_output=True, text=True, check=True
+             )
+             output_list = result.stdout.split()
+             job_state = re.sub(r'\+$', '', output_list[0])
+             exit_code = int(output_list[1].split(":")[0])
+             if job_state not in ["RUNNING", "PENDING", None]:
+                 return job_state, exit_code
+             time.sleep(interval)
+             waited += interval
+        return None, None
     except subprocess.CalledProcessError as e:
         logger.error(f"Error getting job state: {e}")
         return None, None
@@ -194,7 +215,7 @@ def send_set_job_id_request(task_id, user, job_id, short_cmd):
     }
     http_post_request(url, data, headers)
 
-def execute_srun(payload):
+def execute_srun(payload: TaskObject):
     try:
         # Change Directory
         if not os.path.exists(payload.directory):
@@ -234,11 +255,11 @@ def execute_srun(payload):
             send_set_job_id_request(payload.task_id, payload.user, job_id, short_cmd)
 
             if srun_process.wait() == 0:
-                logger.info(f"Process with PID {srun_process.pid} completed successfully.")
+                logger.info(f"Task {payload.task_id}, JobId {payload.job_id} completed successfully.")
             else:
-                logger.error(f"Process with PID {srun_process.pid} terminated with errors.")
+                logger.error(f"Task {payload.task_id}, JobId {payload.job_id} terminated with errors.")
         except Exception as e:
-            logger.error(f"Unexpected error in get_set_job_id: {e}")
+            logger.error(f"Unexpected error in get_job_info: {e}")
         finally:
             with open(srun_log_file_path, "a") as srun_log_file:
                 srun_log_file.write("===EOF===\n")
