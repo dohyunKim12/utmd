@@ -86,7 +86,7 @@ def initialize():
 def signal_handler(signum, frame):
     global kafka_running
     logger.info(f"Received signal {signum}. Shutting down.")
-    for task_id, proc in srun_task_dict.items():
+    for task_id in list(srun_task_dict.keys()):
         terminate_task(task_id)
     kafka_running = False
     sys.exit(0)
@@ -290,7 +290,15 @@ def terminate_task(task_id):
     if process:
         logger.info(f"Terminating task with ID: {task_id}")
         process.terminate()
-        srun_task_dict.pop(task_id, None)
+        try:
+            process.wait(timeout=5)
+            logger.info(f"Task {task_id} terminated gracefully.")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Task {task_id} did not terminate in time. Forcing kill.")
+            process.kill()
+            process.wait()
+        finally:
+            srun_task_dict.pop(task_id, None)
     else:
         logger.warning(f"No running task found with ID: {task_id}")
 
