@@ -1,12 +1,14 @@
 # ENV GTM_SERVER_IP, GTM_SERVER_PORT, KAFKA_ADDRESS, TOPIC_NAME, HOME needed
 import copy
-import os
 import shutil
+import struct
 import subprocess
-import sys
 import json
 import signal
 import logging
+import socket
+import os
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -21,7 +23,7 @@ from dotenv import dotenv_values
 from taskobject import TaskObject
 
 logger = None
-kafka_running = True
+running_flag = True
 srun_task_dict = {}
 
 class Config:
@@ -32,6 +34,7 @@ class Config:
     HOME_DIR = None
     PACKAGE_DIR = None
     LOG_LEVEL = None
+    SOCKET_PATH = None
 
     @classmethod
     def load_config(cls, config_path="config.yaml"):
@@ -47,10 +50,12 @@ class Config:
         cls.GTM_SERVER_IP = os.getenv("GTM_SERVER_IP", "default")
         cls.GTM_SERVER_PORT = os.getenv("GTM_SERVER_PORT", "8023")
         cls.KAFKA_ADDRESS = os.getenv("KAFKA_ADDRESS", "localhost:9092")
-        cls.TOPIC_NAME = "utm-" + os.getenv("USER")
-        cls.HOME_DIR = os.getenv("HOME", "/home/default")
+        user = os.getenv("USER", "dohyun.kim")
+        cls.TOPIC_NAME = "utm-" + user
+        cls.HOME_DIR = os.getenv("HOME", "/home/" + user)
         cls.PACKAGE_DIR = os.path.join(cls.HOME_DIR, "utmd")
         cls.LOG_LEVEL = os.getenv("UTMD_LOG_LEVEL", logging.INFO)
+        cls.SOCKET_PATH = os.getenv("SOCKET_PATH", '/tmp/utm_uds_' + user)
 
 def initialize():
     global logger
@@ -84,11 +89,11 @@ def initialize():
     logger.info("Utmd initialized and started successfully.")
 
 def signal_handler(signum, frame):
-    global kafka_running
+    global running_flag
     logger.info(f"Received signal {signum}. Shutting down.")
     for task_id in list(srun_task_dict.keys()):
         terminate_task(task_id)
-    kafka_running = False
+    running_flag = False
     sys.exit(0)
 
 def http_post_request(url: str, data: dict, headers: dict = None):
@@ -361,7 +366,7 @@ def kafka_consumer():
         value_deserializer=lambda x: x.decode("utf-8"),
     )
     try:
-        while kafka_running:
+        while running_flag:
             for message in consumer:
                 if message and message.value:
                     logger.info(f"Received message: {message.value}")
@@ -380,13 +385,101 @@ def kafka_consumer():
         logger.info("Closing kafka consumer")
         consumer.close()
 
+
+def process_uds_request(request):
+    logger.info(f"Received request: {request}")
+    if request == "liveness":
+        return {"status_code": 200, "message": "Task executed successfully", "data": {"result": True}}
+    elif request == "shutdown":
+        signal_handler(signal.SIGTERM, None)
+        return {"status_code": 200, "message": "Utmd shutdown successfully", "data": {"result": True}}
+    elif request == "count_running":
+        # count srun_task_dict.keys and save into result
+        result = len(srun_task_dict.keys())
+        return {"status_code": 200, "message": "Task executed successfully", "data": {"result": result}}
+    else:
+        return {"status_code": 400, "message": "Invalid request", "data": {"request": request}}
+
+
+def recv_all(sock, length):
+    data = b""
+    while len(data) < length:
+        more = sock.recv(length - len(data))
+        if not more:
+            raise EOFError(f"Connection closed while receiving data. {len(data)} byte received.")
+        data += more
+    return data
+
+
+def send_response(sock, response_dict):
+    response_json = json.dumps(response_dict).encode('utf-8')
+    length_prefix = struct.pack('!I', len(response_json))
+    sock.sendall(length_prefix + response_json)
+
+
+def handle_client(conn):
+    try:
+        raw_length = recv_all(conn, 4)
+        request_length = struct.unpack('!I', raw_length)[0]
+        request = recv_all(conn, request_length).decode("utf-8")
+
+        logger.info(f"Received client request: {request}")
+        response = process_uds_request(request)
+        send_response(conn, response)
+        logger.info("Send response success.")
+    except Exception as e:
+        logger.error(f"Error occurred while handling client request: {e}")
+    finally:
+        conn.close()
+        logger.info("Client connection close.")
+
+
+def bind_socket():
+    global running_flag
+    logger.info(f"Binding socket to {Config.SOCKET_PATH}")
+    if os.path.exists(Config.SOCKET_PATH):
+        os.unlink(Config.SOCKET_PATH)
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(Config.SOCKET_PATH)
+        server.listen(5)
+        logger.info(f"UDS server listening on {Config.SOCKET_PATH}")
+
+        threads = []
+
+        try:
+            while running_flag:
+                try:
+                    client, _ = server.accept()
+                    logger.info(f"Client connection accepted")
+                    thread = threading.Thread(target=handle_client, args=(client,))
+                    thread.start()
+                    threads.append(thread)
+                except socket.error as e:
+                    if running_flag:
+                        logger.error(f"Socket error occurred: {e}")
+                    else:
+                        logger.info("Sigterm detected")
+                        break
+        finally:
+            logger.info("Server terminating: All uds connections waiting for terminate")
+            for thread in threads:
+                thread.join()
+            logger.info("All server & client threads terminated.")
+
+
 def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
     initialize()
 
-    kafka_consumer()
+    consumer_thread = threading.Thread(target=kafka_consumer, daemon=True)
+    consumer_thread.start()
+
+    bind_socket()
+
+    consumer_thread.join()
 
 if __name__ == "__main__":
     logging.info("Running in background mode.")
