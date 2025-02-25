@@ -1,7 +1,9 @@
 import requests
 
 from config.config import Config
-from config.logger import logger
+from config.logger import get_logger
+
+logger = get_logger()
 
 
 def http_post_request(url: str, data: dict, headers: dict = None):

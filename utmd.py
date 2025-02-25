@@ -11,12 +11,10 @@ import threading
 import uuid
 from datetime import datetime, timezone
 import time
-
 import re
-
+from config.config import Config
 from config.logger import get_logger
 from object.taskobject import TaskObject
-from util.http_utils import *
 
 running_flag = True
 srun_task_dict = {}
@@ -30,11 +28,17 @@ def get_srun_task_dict():
 Config.load_config()
 logger = get_logger()
 
+# Must be imported after Config.load_config()
+from util.http_utils import *
+from kafka_consumer import kafka_consumer
+from uds_server import bind_socket
+
 
 def signal_handler(signum, frame):
     global running_flag
     logger.info(f"Received signal {signum}. Shutting down.")
     for task_id in list(srun_task_dict.keys()):
+        send_finish_request(task_id, 'root', "cancelled")
         terminate_task(task_id)
     running_flag = False
     sys.exit(0)
@@ -86,6 +90,7 @@ def regenerate_payload(payload):
 
 
 def get_job_info(comment_value, max_retries, interval):
+    logger.info(f"Searching for job with comment: {comment_value}")
     for attempt in range(max_retries):
         result = subprocess.run(["scontrol", "show", "job", "--json"], capture_output=True, text=True) # sync call
         try:
@@ -94,6 +99,7 @@ def get_job_info(comment_value, max_retries, interval):
                 if job.get("comment") == comment_value:
                     job_id = str(job["job_id"])
                     short_cmd = job["name"]
+                    logger.info(f"Found job with ID: {job_id}, short_cmd: {short_cmd}, comment: {comment_value}")
                     return job_id, short_cmd
 
         except (json.JSONDecodeError, KeyError):
@@ -171,7 +177,7 @@ def execute_srun(payload: TaskObject):
             else:
                 logger.error(f"Task {payload.task_id}, JobId {payload.job_id} terminated with errors.")
         except Exception as e:
-            logger.error(f"Unexpected error in get_job_info: {e}")
+            logger.error(f"Unexpected error in get_job_info & send_set_job_id: {e}")
         finally:
             with open(srun_log_file_path, "a") as srun_log_file:
                 srun_log_file.write("===EOF===\n")
@@ -216,11 +222,9 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    from kafka_consumer import kafka_consumer
     consumer_thread = threading.Thread(target=kafka_consumer, daemon=True)
     consumer_thread.start()
 
-    from uds_server import bind_socket
     bind_socket()
 
     consumer_thread.join()
