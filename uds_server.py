@@ -5,11 +5,10 @@ import struct
 import threading
 import socket
 
-from config.config import Config
-from config.logger import get_logger
+from config import constants
+from config.globals import Globals
 
-
-logger = get_logger()
+logger = Globals.logger
 
 
 def process_uds_request(request):
@@ -22,7 +21,7 @@ def process_uds_request(request):
         return {"status_code": 200, "message": "Utmd shutdown successfully", "data": {"result": True}}
     elif request == "count_running":
         # count srun_task_dict.keys and save into result
-        result = len(utmd.get_srun_task_dict().keys())
+        result = len(Globals.srun_task_dict.keys())
         return {"status_code": 200, "message": "Task executed successfully", "data": {"result": result}}
     else:
         return {"status_code": 400, "message": "Invalid request", "data": {"request": request}}
@@ -62,20 +61,19 @@ def handle_client(conn):
 
 
 def bind_socket():
-    import utmd
-    logger.info(f"Binding socket to {Config.SOCKET_PATH}")
-    if os.path.exists(Config.SOCKET_PATH):
-        os.unlink(Config.SOCKET_PATH)
+    logger.info(f"Binding socket to {constants.SOCKET_PATH}")
+    if os.path.exists(constants.SOCKET_PATH):
+        os.unlink(constants.SOCKET_PATH)
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-        server.bind(Config.SOCKET_PATH)
+        server.bind(constants.SOCKET_PATH)
         server.listen(5)
-        logger.info(f"UDS server listening on {Config.SOCKET_PATH}")
+        logger.info(f"UDS server listening on {constants.SOCKET_PATH}")
 
         threads = []
 
         try:
-            while utmd.get_running_flag():
+            while Globals.running_flag:
                 try:
                     client, _ = server.accept()
                     logger.info(f"Client connection accepted")
@@ -83,7 +81,7 @@ def bind_socket():
                     thread.start()
                     threads.append(thread)
                 except socket.error as e:
-                    if utmd.get_running_flag():
+                    if Globals.running_flag:
                         logger.error(f"Socket error occurred: {e}")
                     else:
                         logger.info("Sigterm detected")

@@ -6,27 +6,28 @@ from datetime import datetime, timezone
 from dotenv import dotenv_values
 from kafka import KafkaConsumer
 
-from config.config import Config
-from config.logger import logger, get_logger
+from config import constants
+from config.globals import Globals
+
 from object.taskobject import TaskObject
 
 
-logger = get_logger()
+logger = Globals.logger
 
 
 def kafka_consumer():
     import utmd
     logger.info("Starting Kafka consumer...")
     consumer = KafkaConsumer(
-        Config.TOPIC_NAME,
-        bootstrap_servers=Config.KAFKA_ADDRESS,
+        constants.TOPIC_NAME,
+        bootstrap_servers=constants.KAFKA_ADDRESS,
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id="utmd",
         value_deserializer=lambda x: x.decode("utf-8"),
     )
     try:
-        while utmd.get_running_flag():
+        while Globals.running_flag:
             for message in consumer:
                 if message and message.value:
                     logger.info(f"Received message: {message.value}")
@@ -83,7 +84,7 @@ def validate_message(message):
         local_tz = datetime.now().astimezone().tzinfo
         dt_local = dt_utc.astimezone(local_tz)
         date_str = dt_local.strftime("%Y-%m-%d")
-        env_path = f"{Config.PACKAGE_DIR}/commands/{date_str}/{uuid}/.env"
+        env_path = f"{constants.PACKAGE_DIR}/commands/{date_str}/{uuid}/.env"
 
         if os.path.exists(env_path):
             env = dotenv_values(env_path)

@@ -12,21 +12,12 @@ import uuid
 from datetime import datetime, timezone
 import time
 import re
-from config.config import Config
-from config.logger import get_logger
 from object.taskobject import TaskObject
+from config.globals import Globals
+from config.logger import initialize_logger
 
-running_flag = True
-srun_task_dict = {}
-
-def get_running_flag():
-    return running_flag
-
-def get_srun_task_dict():
-    return srun_task_dict
-
-Config.load_config()
-logger = get_logger()
+initialize_logger()
+logger = Globals.logger
 
 # Must be imported after Config.load_config()
 from util.http_utils import *
@@ -37,7 +28,7 @@ from uds_server import bind_socket
 def signal_handler(signum, frame):
     global running_flag
     logger.info(f"Received signal {signum}. Shutting down.")
-    for task_id in list(srun_task_dict.keys()):
+    for task_id in list(Globals.srun_task_dict.keys()):
         logger.info(f"Terminating task with ID: {task_id}")
         terminate_task(task_id)
         send_finish_request(task_id, 'root', "cancelled")
@@ -56,10 +47,10 @@ def regenerate_payload(payload):
     local_tz = datetime.now().astimezone().tzinfo
     dt_local = dt_utc.astimezone(local_tz)
     date_str = dt_local.strftime("%Y-%m-%d")
-    old_env_path = f"{Config.PACKAGE_DIR}/commands/{date_str}/{payload.uuid}/.env"
+    old_env_path = f"{constants.PACKAGE_DIR}/commands/{date_str}/{payload.uuid}/.env"
 
     new_date_str = datetime.now(tz=local_tz).strftime("%Y-%m-%d")
-    new_env_path = f"{Config.PACKAGE_DIR}/commands/{new_date_str}/{new_uuid}/.env"
+    new_env_path = f"{constants.PACKAGE_DIR}/commands/{new_date_str}/{new_uuid}/.env"
 
     try:
         new_env_dir = os.path.dirname(new_env_path)
@@ -143,7 +134,7 @@ def execute_srun(payload: TaskObject):
         os.chdir(payload.directory)
         logger.info(f"Executing command: `{payload.command}` in directory: {payload.directory}")
 
-        srun_log_file_path = os.path.join(Config.PACKAGE_DIR, "commands", payload.date_str , payload.uuid, "srun.log")
+        srun_log_file_path = os.path.join(constants.PACKAGE_DIR, "commands", payload.date_str, payload.uuid, "srun.log")
         os.makedirs(os.path.dirname(srun_log_file_path), exist_ok=True)
 
         with open(srun_log_file_path, "a") as srun_log_file:
@@ -161,7 +152,7 @@ def execute_srun(payload: TaskObject):
                 start_new_session=True
             )
             logger.info(f"Started background process with PID: {srun_process.pid}")
-            srun_task_dict[payload.task_id] = srun_process
+            Globals.srun_task_dict[payload.task_id] = srun_process
 
         try:
             # execute scontrol command for get job_id, short_cmd by comment (utm-uuid)
@@ -183,7 +174,7 @@ def execute_srun(payload: TaskObject):
             with open(srun_log_file_path, "a") as srun_log_file:
                 srun_log_file.write("===EOF===\n")
                 srun_log_file.flush()
-            srun_task_dict.pop(payload.task_id, None)
+            Globals.srun_task_dict.pop(payload.task_id, None)
 
             # execute sacct & get status, call GTM addTask if preempt
             status, exit_code = get_job_state(payload.job_id)
@@ -203,7 +194,7 @@ def execute_srun(payload: TaskObject):
         logger.error(f"Error occurred in srun execute: {e}")
 
 def terminate_task(task_id):
-    process = srun_task_dict.get(task_id)
+    process = Globals.srun_task_dict.get(task_id)
     if process:
         logger.info(f"Terminating task with ID: {task_id}")
         process.terminate()
@@ -215,7 +206,7 @@ def terminate_task(task_id):
             process.kill()
             process.wait()
         finally:
-            srun_task_dict.pop(task_id, None)
+            Globals.srun_task_dict.pop(task_id, None)
     else:
         logger.warning(f"No running task found with ID: {task_id}")
 

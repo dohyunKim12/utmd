@@ -1,9 +1,9 @@
 import requests
 
-from config.config import Config
-from config.logger import get_logger
+from config import constants
+from config.globals import Globals
 
-logger = get_logger()
+logger = Globals.logger
 
 
 def http_post_request(url: str, data: dict, headers: dict = None):
@@ -23,7 +23,7 @@ def http_post_request(url: str, data: dict, headers: dict = None):
 
 
 def send_add_request(payload):
-    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/add"
+    url = f"http://{constants.GTM_SERVER_IP}:{constants.GTM_SERVER_PORT}/api/task/add"
     headers = {"Content-Type": "application/json"}
     data = payload.to_dict()
     http_post_request(url, data, headers)
@@ -31,7 +31,7 @@ def send_add_request(payload):
 
 def send_finish_request(task_id, user, state):
     logger.info(f"Send finish request for task: {task_id}, state: {state}")
-    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/finish"
+    url = f"http://{constants.GTM_SERVER_IP}:{constants.GTM_SERVER_PORT}/api/task/finish"
     headers = {"Content-Type": "application/json"}
     data = {
         "task_id": task_id,
@@ -42,7 +42,7 @@ def send_finish_request(task_id, user, state):
 
 
 def send_set_job_id_request(task_id, user, job_id, short_cmd):
-    url = f"http://{Config.GTM_SERVER_IP}:{Config.GTM_SERVER_PORT}/api/task/set_job_id"
+    url = f"http://{constants.GTM_SERVER_IP}:{constants.GTM_SERVER_PORT}/api/task/set_job_id"
     headers = {"Content-Type": "application/json"}
     data = {
         "task_id": task_id,
