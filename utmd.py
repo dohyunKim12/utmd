@@ -38,8 +38,9 @@ def signal_handler(signum, frame):
     global running_flag
     logger.info(f"Received signal {signum}. Shutting down.")
     for task_id in list(srun_task_dict.keys()):
-        send_finish_request(task_id, 'root', "cancelled")
+        logger.info(f"Terminating task with ID: {task_id}")
         terminate_task(task_id)
+        send_finish_request(task_id, 'root', "cancelled")
     running_flag = False
     sys.exit(0)
 
@@ -182,6 +183,7 @@ def execute_srun(payload: TaskObject):
             with open(srun_log_file_path, "a") as srun_log_file:
                 srun_log_file.write("===EOF===\n")
                 srun_log_file.flush()
+            srun_task_dict.pop(payload.task_id, None)
 
             # execute sacct & get status, call GTM addTask if preempt
             status, exit_code = get_job_state(payload.job_id)
