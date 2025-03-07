@@ -1,0 +1,6 @@
+env_vars:
+  GTM_SERVER_IP: "127.0.0.1"
+  GTM_SERVER_PORT: "8023"
+  KAFKA_ADDRESS: "localhost:9092"
+  TOPIC_NAME: "utm-{username}"
+  UTMD_LOG_LEVEL: "INFO"
