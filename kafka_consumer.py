@@ -52,7 +52,7 @@ def validate_message(message):
     try:
         data = json.loads(message)
 
-        required_fields = ["id", "user", "directory", "uuid", "command", "action"]
+        required_fields = ["id", "user", "directory", "uuid", "command", "action", "uid", "gid"]
         if not all(field in data for field in required_fields):
             logger.error(f"Missing required fields in message: {message}")
             return None
@@ -66,6 +66,8 @@ def validate_message(message):
         license_type = data.get("license_type")
         license_count = data.get("license_count")
         timelimit = data.get("timelimit")
+        uid = data.get("uid")
+        gid = data.get("gid")
         requested_cpu = data.get("requested_cpu")
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse message: {message}, Error: {e}")
@@ -91,7 +93,7 @@ def validate_message(message):
         else :
             logger.error(f".env file not found at: {env_path}")
             return None
-        return TaskObject(task_id, job_id, user, command, uuid, directory, env, date_str, license_type, license_count, timelimit, requested_cpu)
+        return TaskObject(task_id, job_id, user, command, uuid, directory, env, date_str, license_type, license_count, timelimit, uid, gid, requested_cpu)
     else :
         logger.error(f"Invalid action type: {action}")
         return None

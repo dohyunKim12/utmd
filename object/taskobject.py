@@ -13,6 +13,8 @@ class TaskObject:
     license_type: str
     license_count: int
     timelimit: int
+    uid: int
+    gid: int
     requested_cpu: int = 0
 
     def to_dict(self):

@@ -12,6 +12,13 @@ import uuid
 from datetime import datetime, timezone
 import time
 import re
+from pathlib import Path
+
+import uvicorn
+from fastapi import HTTPException, FastAPI
+from starlette.middleware.cors import CORSMiddleware
+
+from apis.routes import router
 from object.taskobject import TaskObject
 from config.globals import Globals
 from config.logger import initialize_logger
@@ -35,6 +42,16 @@ def signal_handler(signum, frame):
     running_flag = False
     sys.exit(0)
 
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(router, prefix="/api")
 
 def regenerate_payload(payload):
     # re-gen uuid
@@ -142,8 +159,8 @@ def execute_srun(payload: TaskObject):
             srun_log_file.flush()
 
             def preexec_fn():
-                os.setgid(2001)
-                os.setuid(2001)
+                os.setgid(payload.gid)
+                os.setuid(payload.uid)
 
             srun_process = subprocess.Popen(
                 payload.command,
@@ -215,6 +232,9 @@ def terminate_task(task_id):
     else:
         logger.warning(f"No running task found with ID: {task_id}")
 
+def run_fastapi():
+    logger.info("Starting FastAPI server (ADMIN_AGENT=true)")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 def main():
     signal.signal(signal.SIGTERM, signal_handler)
@@ -223,7 +243,11 @@ def main():
     consumer_thread = threading.Thread(target=kafka_consumer, daemon=True)
     consumer_thread.start()
 
-    bind_socket()
+    # bind_socket()
+
+    api_thread = threading.Thread(target=run_fastapi, daemon=True)
+    api_thread.start()
+    logger.info("FastAPI thread started.")
 
     consumer_thread.join()
 
