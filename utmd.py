@@ -141,9 +141,14 @@ def execute_srun(payload: TaskObject):
             srun_log_file.write(f"Starting command: {payload.command}\n")
             srun_log_file.flush()
 
+            def preexec_fn():
+                os.setgid(2001)
+                os.setuid(2001)
+
             srun_process = subprocess.Popen(
                 payload.command,
                 shell=True,
+                preexec_fn=preexec_fn,
                 stdout=srun_log_file,
                 stderr=srun_log_file,
                 stdin=subprocess.DEVNULL,
